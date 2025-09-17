@@ -1,5 +1,5 @@
 /* =========================
-   script.js — نسخة كاملة مع إصلاح الاستجابة
+   script.js — نسخة كاملة نهائية
    ========================= */
 
 /* تحسين واجهة المستخدم: تمدد تلقائي للـ textarea وتحديثها بعد الإرسال */
@@ -455,6 +455,7 @@ const App = {
     }
   },
   services: {
+    // ======= نسخة محسّنة للتعامل مع أخطاء السيرفر غير الـ JSON =======
     async callAI(payload) {
       try {
         const res = await fetch('/api/generate', {
@@ -463,17 +464,33 @@ const App = {
           body: JSON.stringify(payload)
         });
 
+        const reqId = res.headers.get('x-request-id') || res.headers.get('X-Request-ID') || '';
+
         if (!res.ok) {
-          const errorData = await res.json().catch(() => ({ error: "Failed to parse error response from server." }));
-          const serverMsg = [errorData.error, errorData.details, errorData.requestId].filter(Boolean).join(' | ');
-          throw new Error(serverMsg || `HTTP ${res.status}`);
+          let serverMsg = '';
+          try {
+            const maybeJson = await res.json();
+            serverMsg = [maybeJson.error, maybeJson.details, maybeJson.status].filter(Boolean).join(' | ');
+          } catch {
+            try {
+              const txt = await res.text();
+              serverMsg = txt ? txt.slice(0, 800) : '';
+            } catch {}
+          }
+          const statusLine = `${res.status} ${res.statusText || ''}`.trim();
+          const composed = [statusLine || null, serverMsg || null, reqId ? `req:${reqId}` : null]
+            .filter(Boolean)
+            .join(' | ');
+          throw new Error(composed || 'Unknown server error');
         }
 
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         return data.text || '';
       } catch (e) {
-        console.error("AI Call Error:", e);
-        return (App.state.lang === 'ar') ? `⚠️ خطأ من الخادم: ${e.message}` : `⚠️ Server error: ${e.message}`;
+        console.error('AI Call Error:', e);
+        return (App.state.lang === 'ar')
+          ? `⚠️ خطأ من الخادم: ${e.message}`
+          : `⚠️ Server error: ${e.message}`;
       }
     },
     speech: {
@@ -771,7 +788,7 @@ const App = {
               content: m.parts[0].text
             };
             if (m.images && m.images.length > 0) {
-              messagePayload.images = m.images; // تُرسل بصيغة dataURL؛ الخادم يتعامل معها
+              messagePayload.images = m.images; // تُرسل بصيغة dataURL
             }
             return messagePayload;
           }),
@@ -918,7 +935,6 @@ const App = {
       if (pinSpan) pinSpan.textContent = isPinned ? L.contextUnpin : L.contextPin;
       messageContextMenu.querySelectorAll('[data-role="user-only"], [data-role="separator"]').forEach(el => { el.style.display = isUser ? '' : 'none'; });
       document.body.appendChild(messageContextMenu);
-      // تموضع القائمة
       const rect = bubble.getBoundingClientRect();
       let top = window.scrollY + rect.top - messageContextMenu.offsetHeight - 10;
       if (top < window.scrollY + 10) { top = window.scrollY + rect.bottom + 10; }
@@ -979,7 +995,7 @@ const App = {
     }
   },
 
-  /* ========= إصلاح أساسي: App.init بآلية setup فورية أو انتظار DOM ========= */
+  /* ========= App.init بآلية setup فورية أو انتظار DOM ========= */
   init: function () {
     const setup = () => {
       this.cacheElements();
@@ -1052,7 +1068,6 @@ const App = {
       initUIEnhancements();
     };
 
-    // شغّل الإعداد فورًا إذا كان الـ DOM جاهزًا، وإلا انتظر الحدث
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', setup);
     } else {
