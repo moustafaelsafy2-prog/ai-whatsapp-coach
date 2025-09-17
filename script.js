@@ -232,14 +232,15 @@ const App = {
     // 💡 تعديل مهم: تم تغيير الرابط ليطابق إعدادات netlify.toml
     async callAI(payload) {
         try {
-            const res = await fetch('/api/generate', { // <--- يستخدم الرابط المختصر
+            // We use /api/generate because of the redirect rule in netlify.toml
+            const res = await fetch('/api/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
             
             if (!res.ok) {
-                const errorData = await res.json().catch(() => ({ error: "Failed to parse error response" }));
+                const errorData = await res.json().catch(() => ({ error: "Failed to parse error response from server." }));
                 throw new Error(errorData.error || `HTTP error! status: ${res.status}`);
             }
             
@@ -253,7 +254,6 @@ const App = {
     speech: { supportSpeechRecognition: () => ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window), startLocalRecognition() { const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return null; const sessionId = ++App.state.sttSessionId; const rec = new SR(); rec.lang = (App.state.lang === 'ar' ? 'ar-EG' : 'en-US'); rec.interimResults = true; rec.continuous = true; rec.onresult = (e) => { if (sessionId !== App.state.sttSessionId) return; let final = '', interim = ''; for (let i = e.resultIndex; i < e.results.length; i++) { if (e.results[i].isFinal) { final += e.results[i][0].transcript; } else { interim = e.results[i][0].transcript; } } const text = (final || interim).trim(); if (text) { App.elements.userInput.value = text; App.elements.userInput.dispatchEvent(new Event('input')); } }; rec.start(); return { rec, sessionId }; }, async startRecording() { if (App.state.isRecording) return; App.state.isRecording = true; const L = App.i18n.strings[App.state.lang]; if (this.supportSpeechRecognition()) { const h = this.startLocalRecognition(); App.state.recognition = h?.rec || null; } else { App.utils.toast(L.recDenied); App.state.isRecording = false; return; } App.elements.micBtn.classList.add('mic-live'); App.elements.recHintWrap.classList.remove('hidden'); App.elements.recHint.textContent = L.recStart; }, stopRecording() { if (!App.state.isRecording) return; App.state.isRecording = false; if (App.state.recognition && App.state.recognition.stop) { try { App.state.recognition.stop(); App.core.sendMessage(); } catch (_) {} App.state.recognition = null; } App.elements.micBtn.classList.remove('mic-live'); App.elements.recHintWrap.classList.add('hidden'); App.state.sttSessionId++; } }
   },
   prompts: {
-    // This can remain as it is a helper for building the message history, not the main system prompt.
     buildCoachSystemPrompt() {
       return `📌 التوجيه التنفيذي النهائي — مدرب عالمي × خبير تغذية × خبير مكملات... (The long system prompt you provided goes here)`;
     },
@@ -316,12 +316,7 @@ const App = {
         App.ui.setLoading(true);
         App.i18n.autoSetByText(msg);
         
-        const userMessage = { role: 'user', content: msg };
-        if (images.length > 0) {
-            userMessage.images = images.map(img => img.dataUrl);
-        }
-        
-        // Add new user message to history
+        // Add new user message to history for UI
         App.state.chatHistory.push({
             id: `user-${Date.now()}`,
             role: 'user',
@@ -330,7 +325,7 @@ const App = {
             timestamp: Date.now()
         });
 
-        // Display it in the UI
+        // Display it in the UI immediately
         App.ui.rebuildChatUI();
         this.saveHistory();
         
@@ -345,13 +340,15 @@ const App = {
                         content: m.parts[0].text
                     };
                     if (m.images && m.images.length > 0) {
-                        messagePayload.images = m.images;
+                        // The backend expects dataUrl format for images
+                        messagePayload.images = m.images; 
                     }
                     return messagePayload;
                 }),
             concise_image: true // Example of using an advanced parameter
         };
         
+        // Send the complete history to the backend
         this.processAIResponse(payload);
         
         App.elements.userInput.value = '';  
@@ -529,6 +526,3 @@ const App = {
 };
 window.App = App;
 App.init();
-</script>
-</body>
-</html>
