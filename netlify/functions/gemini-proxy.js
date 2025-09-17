@@ -14,24 +14,40 @@ const MODEL_POOL = ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"];
 
 if (!globalThis.fetch) throw new Error("Fetch API not available in this runtime");
 
-// ---------- WhatsApp notification (kept as-is) ----------
-async function sendWhatsAppNotification(payload) {
-  const WHATSAPP_SERVER_URL = "https://2a46e0caeeaf.ngrok-free.app/send-notification";
+// ---------- WhatsApp notification (fixed) ----------
+const NOTIFY_TIMEOUT_MS = 6000;
 
-  let content = "New message";
+function sanitizeText(s = "") {
+  return String(s).replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, 4000);
+}
+
+async function sendWhatsAppNotification(message) {
   try {
-    if (payload?.prompt) content = String(payload.prompt);
-    else if (Array.isArray(payload?.messages)) content = payload.messages.map(m => m?.content || "").join("\n");
-    else if (Array.isArray(payload?.images) || Array.isArray(payload?.audio)) content = "Media content";
-  } catch {}
+    const url = process.env.WHATSAPP_WEBHOOK_URL; // مثال: https://<tunnel>.trycloudflare.com/send-notification
+    if (!url) return;
 
-  const message = `رسالة جديدة من المدرب الذكي:\n\n"${String(content || "").slice(0,500)}"`;
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), NOTIFY_TIMEOUT_MS);
 
-  fetch(WHATSAPP_SERVER_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message })
-  }).catch(e => console.error("WhatsApp notification failed:", e?.message || e));
+    const payload = { message: sanitizeText(message || "") };
+    if (!payload.message) return;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    }).catch(e => ({ ok: false, status: 0, _err: e }));
+
+    clearTimeout(t);
+
+    if (!res || !res.ok) {
+      const status = res?.status ?? 0;
+      console.error("WhatsApp notify failed:", status);
+    }
+  } catch (e) {
+    console.error("WhatsApp notify error:", e?.message || e);
+  }
 }
 // -------------------------------------------------------
 
@@ -56,9 +72,6 @@ exports.handler = async (event) => {
   let payload;
   try { payload = JSON.parse(event.body || "{}"); }
   catch { return respond(400, { error: "Invalid JSON payload", requestId }); }
-
-  // Fire-and-forget WhatsApp notify
-  sendWhatsAppNotification(payload);
 
   // Extract + sanitize
   let {
@@ -92,21 +105,11 @@ exports.handler = async (event) => {
 
   // ----- Build request body for Gemini -----
   const guard = buildGuardrails({ lang, useImageBrief: !!concise_image, level: guard_level });
-  const contents = buildContents({ prompt, messages, images, audio, concise_image }); // ← لا نحقن guard داخل رسائل المستخدم
+  const contents = buildContents({ prompt, messages, images, audio, concise_image });
 
-  const generationConfig = {
-    temperature,
-    topP: top_p,
-    maxOutputTokens: max_output_tokens
-  };
-
-  // MUST be top-level (not in generationConfig)
+  const generationConfig = { temperature, topP: top_p, maxOutputTokens: max_output_tokens };
   const safetySettings = buildSafety(toThreshold(guard_level));
-
-  // systemInstruction: guardrails + (optional) custom system prompt
-  const systemInstruction = {
-    parts: [{ text: ((system ? String(system) + "\n\n" : "") + guard).slice(0, 8000) }]
-  };
+  const systemInstruction = { parts: [{ text: ((system ? String(system) + "\n\n" : "") + guard).slice(0, 8000) }] };
 
   // Try the model(s)
   let lastErr = null;
@@ -118,8 +121,17 @@ exports.handler = async (event) => {
 
       const out = await callGemini(url, body, timeout_ms, include_raw);
       if (out.ok) {
+        // ✅ أرسل رسالة الواتساب بعد الحصول على ردّ الـ AI
+        const aiText = out.text || "";
+        if (aiText) {
+          const notifyBody = (lang === "ar"
+            ? `رد جديد من المدرب الذكي:\n\n${aiText}`
+            : `New Smart Coach reply:\n\n${aiText}`);
+          await sendWhatsAppNotification(notifyBody);
+        }
+
         return respond(200, {
-          text: out.text,
+          text: aiText,
           raw: include_raw ? out.raw : undefined,
           model: m,
           lang,
@@ -203,14 +215,14 @@ function buildContents({ prompt, messages, images, audio, concise_image }){
   if (Array.isArray(messages) && messages.length) {
     return messages.map(m => {
       const parts = [];
-      if (m?.content) parts.push({ text: String(m.content) }); // ← لا نحقن guard هنا
+      if (m?.content) parts.push({ text: String(m.content) });
       parts.push(...mediaParts(m.images, m.audio));
       return { role: (m?.role === "model" || m?.role === "user") ? m.role : "user", parts };
     }).filter(m => m.parts.length);
   }
 
   const parts = [];
-  if (prompt) parts.push({ text: String(prompt) }); // ← بدون guard
+  if (prompt) parts.push({ text: String(prompt) });
   parts.push(...mediaParts(images, audio));
   return [{ role: "user", parts }];
 }
