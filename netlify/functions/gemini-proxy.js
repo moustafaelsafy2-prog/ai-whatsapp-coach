@@ -14,30 +14,14 @@ const MODEL_POOL = ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"];
 
 if (!globalThis.fetch) throw new Error("Fetch API not available in this runtime");
 
-// ---------- WhatsApp notification (kept as-is) ----------
-async function sendWhatsAppNotification(payload) {
+// ---------- WhatsApp notify (single combined message) ----------
+function sendWhatsApp(text) {
   const WHATSAPP_SERVER_URL = "https://2a46e0caeeaf.ngrok-free.app/send-notification";
-
-  let content = "New message";
-  try {
-    if (payload?.prompt) {
-      content = String(payload.prompt);
-    } else if (Array.isArray(payload?.messages)) {
-      // ✅ تعديل بسيط: أرسل فقط آخر رسالتين من المحادثة
-      const lastTwo = payload.messages.slice(-2).map(m => m?.content || "").filter(Boolean);
-      content = lastTwo.join("\n");
-    } else if (Array.isArray(payload?.images) || Array.isArray(payload?.audio)) {
-      content = "Media content";
-    }
-  } catch {}
-
-  const message = `رسالة جديدة من المدرب الذكي:\n\n"${String(content || "").slice(0,500)}"`;
-
   fetch(WHATSAPP_SERVER_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message })
-  }).catch(e => console.error("WhatsApp notification failed:", e?.message || e));
+    body: JSON.stringify({ message: text })
+  }).catch(e => console.error("WhatsApp notify failed:", e?.message || e));
 }
 // -------------------------------------------------------
 
@@ -63,8 +47,7 @@ exports.handler = async (event) => {
   try { payload = JSON.parse(event.body || "{}"); }
   catch { return respond(400, { error: "Invalid JSON payload", requestId }); }
 
-  // Fire-and-forget WhatsApp notify
-  sendWhatsAppNotification(payload);
+  // ❌ (تم إلغاء الإشعار المبكر هنا ليبقى إشعار واحد بعد الرد)
 
   // Extract + sanitize
   let {
@@ -98,21 +81,11 @@ exports.handler = async (event) => {
 
   // ----- Build request body for Gemini -----
   const guard = buildGuardrails({ lang, useImageBrief: !!concise_image, level: guard_level });
-  const contents = buildContents({ prompt, messages, images, audio, concise_image }); // ← لا نحقن guard داخل رسائل المستخدم
+  const contents = buildContents({ prompt, messages, images, audio, concise_image });
 
-  const generationConfig = {
-    temperature,
-    topP: top_p,
-    maxOutputTokens: max_output_tokens
-  };
-
-  // MUST be top-level (not in generationConfig)
+  const generationConfig = { temperature, topP: top_p, maxOutputTokens: max_output_tokens };
   const safetySettings = buildSafety(toThreshold(guard_level));
-
-  // systemInstruction: guardrails + (optional) custom system prompt
-  const systemInstruction = {
-    parts: [{ text: ((system ? String(system) + "\n\n" : "") + guard).slice(0, 8000) }]
-  };
+  const systemInstruction = { parts: [{ text: ((system ? String(system) + "\n\n" : "") + guard).slice(0, 8000) }] };
 
   // Try the model(s)
   let lastErr = null;
@@ -124,6 +97,21 @@ exports.handler = async (event) => {
 
       const out = await callGemini(url, body, timeout_ms, include_raw);
       if (out.ok) {
+        // ✅ إشعار واحد: "رسالة العميل الأخيرة + رد الذكاء"
+        try {
+          const lastUser =
+            (Array.isArray(messages)
+              ? [...messages].reverse().find(mm => (mm?.role || "").toLowerCase() === "user")?.content
+              : null) || String(prompt || "");
+          const clip = (s, n) => String(s || "").trim().slice(0, n);
+          const msg =
+            `🗣️ العميل:\n${clip(lastUser, 900)}\n\n` +
+            `🤖 الرد:\n${clip(out.text || "", 1800)}`;
+          sendWhatsApp(msg);
+        } catch (e) {
+          console.error("Compose WhatsApp message failed:", e?.message || e);
+        }
+
         return respond(200, {
           text: out.text,
           raw: include_raw ? out.raw : undefined,
@@ -209,14 +197,14 @@ function buildContents({ prompt, messages, images, audio, concise_image }){
   if (Array.isArray(messages) && messages.length) {
     return messages.map(m => {
       const parts = [];
-      if (m?.content) parts.push({ text: String(m.content) }); // ← لا نحقن guard هنا
+      if (m?.content) parts.push({ text: String(m.content) });
       parts.push(...mediaParts(m.images, m.audio));
       return { role: (m?.role === "model" || m?.role === "user") ? m.role : "user", parts };
     }).filter(m => m.parts.length);
   }
 
   const parts = [];
-  if (prompt) parts.push({ text: String(prompt) }); // ← بدون guard
+  if (prompt) parts.push({ text: String(prompt) });
   parts.push(...mediaParts(images, audio));
   return [{ role: "user", parts }];
 }
