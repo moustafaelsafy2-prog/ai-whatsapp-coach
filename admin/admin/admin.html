@@ -1,0 +1,74 @@
+<!-- admin/index.html -->
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <title>لوحة الأدمن</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    .hidden { display: none; }
+    .chat { border: 1px solid #ccc; padding: 10px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>📂 لوحة الأدمن</h1>
+
+  <div id="login">
+    <input id="username" placeholder="اسم المستخدم">
+    <input id="password" type="password" placeholder="كلمة المرور">
+    <button onclick="login()">دخول</button>
+    <p id="loginError" style="color:red;"></p>
+  </div>
+
+  <div id="dashboard" class="hidden">
+    <h2>📋 قائمة العملاء</h2>
+    <ul id="clients"></ul>
+    <div id="chatView"></div>
+  </div>
+
+  <script>
+    const ADMIN_USER = "admin";
+    const ADMIN_PASS = "123456";
+
+    function login() {
+      const u = document.getElementById("username").value;
+      const p = document.getElementById("password").value;
+      if (u === ADMIN_USER && p === ADMIN_PASS) {
+        document.getElementById("login").classList.add("hidden");
+        document.getElementById("dashboard").classList.remove("hidden");
+        loadClients();
+      } else {
+        document.getElementById("loginError").textContent = "❌ بيانات غير صحيحة";
+      }
+    }
+
+    async function loadClients() {
+      const res = await fetch("/.netlify/functions/list-sessions");
+      const clients = await res.json();
+      const ul = document.getElementById("clients");
+      ul.innerHTML = "";
+      clients.forEach(c => {
+        const li = document.createElement("li");
+        li.innerHTML = `<button onclick="loadChat('${c}')">${c}</button>`;
+        ul.appendChild(li);
+      });
+    }
+
+    async function loadChat(client) {
+      const res = await fetch(`/.netlify/functions/get-session?client=${client}`);
+      const chats = await res.json();
+      const div = document.getElementById("chatView");
+      div.innerHTML = `<h3>💬 محادثات ${client}</h3>`;
+      chats.forEach((session, i) => {
+        const box = document.createElement("div");
+        box.className = "chat";
+        box.innerHTML = `<h4>جلسة ${i+1} (${new Date(session.timestamp).toLocaleString()})</h4>`;
+        session.messages.forEach(m => {
+          box.innerHTML += `<p><b>${m.role}:</b> ${m.text}</p>`;
+        });
+        div.appendChild(box);
+      });
+    }
+  </script>
+</body>
+</html>
