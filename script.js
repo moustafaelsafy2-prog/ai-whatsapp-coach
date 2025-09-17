@@ -671,4 +671,3 @@ window.App = App;
 App.init();
 
 }
-الان نجح كل شئ شكرا لك
