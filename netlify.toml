@@ -1,13 +1,18 @@
 [build]
-  # بما أن كل الملفات (index.html, etc.) موجودة مباشرة داخل مجلد chat-app
-  # الذي سترفعه إلى GitHub، فإن مجلد النشر هو الجذر "."
+  # This command installs the dependencies from your main package.json
+  command = "npm install"
+  
+  # The root of your site (where index.html is)
   publish = "."
+
+  # The directory where your serverless functions live
   functions = "netlify/functions"
 
 [functions]
+  # Use the fast esbuild bundler for your functions
   node_bundler = "esbuild"
 
-# إعادة توجيه الطلبات من الواجهة الأمامية إلى الدالة السحابية
+# This rule makes your function available at a clean URL
 [[redirects]]
   from = "/api/generate"
   to = "/.netlify/functions/gemini-proxy"
