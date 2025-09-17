@@ -1,321 +1,340 @@
-function initUIEnhancements() { const userInput = document.getElementById('userInput'); const micBtn = document.getElementById('micBtn'); const sendBtn = document.getElementById('sendBtn'); if (!userInput || !micBtn || !sendBtn) return; const adjustTextareaHeight = () => { userInput.style.height = 'auto'; const maxH = 180; const newH = Math.min(userInput.scrollHeight, maxH); userInput.style.height = `${newH}px`; userInput.style.overflowY = (userInput.scrollHeight > maxH) ? 'auto' : 'hidden'; }; ['input','change','keyup'].forEach(ev => userInput.addEventListener(ev, adjustTextareaHeight)); adjustTextareaHeight(); const handleKey = (e) => { if ((e.key === 'Enter' && !e.shiftKey) || (e.keyCode === 13 && !e.shiftKey)) { e.preventDefault(); sendBtn.click(); } }; userInput.addEventListener('keydown', handleKey); if ('ontouchstart' in window || navigator.maxTouchPoints > 0) { userInput.setAttribute('inputmode','text'); } const originalScrollIntoViewIfNeeded = Element.prototype.scrollIntoViewIfNeeded || function(centerIfNeeded) { this.scrollIntoView({ behavior: 'smooth', block: centerIfNeeded ? 'center' : 'nearest'}); }; Element.prototype.scrollIntoViewIfNeeded = function() { const args = arguments; window.requestAnimationFrame(() => { try { originalScrollIntoViewIfNeeded.apply(this, args); } catch {} }); }; const origFocus = HTMLElement.prototype.focus; HTMLElement.prototype.focus = function() { const args = arguments; setTimeout(() => { try { origFocus.apply(this, args); } catch {} }, 0); }; const origAppend = Element.prototype.appendChild; Element.prototype.appendChild = function() { const args = arguments; const el = origAppend.apply(this, args); if (el && el.tagName === 'TEXTAREA') setTimeout(adjustTextareaHeight, 0); return el; }; const origInsert = Element.prototype.insertBefore; Element.prototype.insertBefore = function() { const args = arguments; const el = origInsert.apply(this, args); if (el && el.tagName === 'TEXTAREA') setTimeout(adjustTextareaHeight, 0); return el; }; const origReplace = Element.prototype.replaceChildren; Element.prototype.replaceChildren = function() { const args = arguments; const el = origReplace.apply(this, args); setTimeout(adjustTextareaHeight, 0); return el; }; const origSetRangeText = HTMLTextAreaElement.prototype.setRangeText; HTMLTextAreaElement.prototype.setRangeText = function() { const args = arguments; const r = origSetRangeText.apply(this, args); setTimeout(adjustTextareaHeight, 0); return r; }; const origInsertData = DataTransfer.prototype.setData; DataTransfer.prototype.setData = function() { const args = arguments; try { return origInsertData.apply(this, args); } finally { setTimeout(adjustTextareaHeight, 0); } }; const origClipboard = navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText.bind(navigator.clipboard) : null; if (origClipboard) { navigator.clipboard.writeText = function() { const args = arguments; return origClipboard.apply(this, args).finally(() => setTimeout(adjustTextareaHeight, 0)); }; } const origAppendMessage = (window.__appendMessage__ || function(){}); window.__appendMessage__ = function() { const args = arguments; origAppendMessage.apply(this, args); setTimeout(adjustTextareaHeight, 0); }; }
+/* ---------- Utilities ---------- */
+function $(id) { return document.getElementById(id); }
+function safe(fn, fallback) { try { return fn(); } catch { return fallback; } }
+function dirFor(lang){ return lang === 'ar' ? 'rtl' : 'ltr'; }
 
+/* ---------- App State ---------- */
 const App = {
-  config: { MAX_PROMPT_CHARS: 28000, STORAGE_KEY: 'smart-coach-session-v3', LONG_PRESS_DURATION: 400, MAX_IMAGES: 5 },
-  state: { userState: { step: 0, data: {} }, lang: 'ar', chatHistory: [], uploading: false, isRecording: false, mediaRecorder: null, recordedChunks: [], audioBlob: null, imageBlobs: [], currentContextMenu: null, isEditing: false, editingMessageId: null },
-  elements: {},
-  cacheElements() {
-    const $ = id => document.getElementById(id);
-    this.elements = {
-      chat: $('chat'),
-      userInput: $('userInput'),
-      sendBtn: $('sendBtn'),
-      micBtn: $('micBtn'),
-      uploadImageBtn: $('uploadImageBtn'),
-      clearBtn: $('clearBtn'),
-      langToggleBtn: $('langToggleBtn'),
-      fileInput: $('fileInput'),
-      imagePreview: $('imagePreview'),
-      imageViewerModal: $('imageViewerModal'),
-      imageViewer: $('imageViewer'),
-      closeImageViewerBtn: $('closeImageViewerBtn'),
-      howToUseModal: $('howToUseModal'),
-      howToUseLink: $('howToUseLink'),
-      closeHowToUseBtn: $('closeHowToUseBtn')
+  config: {
+    MAX_IMAGES: 5,
+    DEFAULT_MODEL: 'auto',
+    DEFAULT_TEMP: 0.6,
+    DEFAULT_TOPP: 0.9,
+    DEFAULT_MAXTOK: 2048,
+    DEFAULT_TIMEOUT: 26000
+  },
+  state: {
+    lang: 'ar',
+    isRecording: false,
+    mediaRecorder: null,
+    recordedChunks: [],
+    audioBlob: null
+  },
+  el: {}
+};
+
+/* ---------- Element Binding (with fallbacks) ---------- */
+function bindElements(){
+  // عناصر أساسية (بعضها يختلف اسمه بين الإصدارات)
+  App.el.chat =
+    $('chat') || $('chatMessages') || $('chatContainer');            // الحاوية الرئيسية للرسائل
+  App.el.userInput = $('userInput') || $('inputArea');               // مربع الإدخال
+  App.el.sendBtn = $('sendBtn');                                     // زر الإرسال
+  App.el.micBtn = $('micBtn');                                       // زر الميكروفون
+  App.el.fileInput = $('fileInput');                                 // إدخال الصور/الملفات
+
+  // عناصر اختيارية (قد لا تكون موجودة)
+  App.el.langToggleBtn = $('langToggleBtn') || $('btnLang');         // زر تبديل اللغة
+  App.el.clearBtn = $('clearBtn');                                   // زر مسح المحادثة (اختياري)
+  App.el.uploadImageBtn = $('uploadImageBtn') || $('btnAttach');     // زر إرفاق الصورة (اختياري)
+  App.el.imagePreview =
+    $('imagePreview') || $('imagePreviewsContainer') || $('imagePreviewsWrapper');
+  App.el.imageViewerModal = $('imageViewerModal') || null;
+  App.el.imageViewer = $('imageViewer') || null;
+  App.el.closeImageViewerBtn = $('closeImageViewerBtn') || null;
+  App.el.howToUseModal = $('howToUseModal') || null;
+  App.el.howToUseLink = $('howToUseLink') || null;
+  App.el.closeHowToUseBtn = $('closeHowToUseBtn') || null;
+
+  // حماية من عدم توفر العناصر الأساسية
+  if (!App.el.chat || !App.el.userInput || !App.el.sendBtn) {
+    console.error('Critical elements missing: chat/userInput/sendBtn');
+  }
+}
+
+/* ---------- UI Helpers ---------- */
+const UI = {
+  t: (k) => {
+    const AR = {
+      placeholder: 'اكتب رسالتك...',
+      typing: 'يكتب...',
+      serverError: '⚠️ خطأ من الخادم: ',
+      empty: 'الرسالة فارغة.'
     };
+    const EN = {
+      placeholder: 'Type your message...',
+      typing: 'typing…',
+      serverError: '⚠️ Server error: ',
+      empty: 'Empty message.'
+    };
+    return (App.state.lang === 'ar' ? AR : EN)[k] || k;
   },
-  i18n: {
-    strings: {
-      ar: {
-        placeholder: 'اكتب رسالتك...',
-        send: 'إرسال',
-        mic: 'تسجيل',
-        stop: 'إيقاف',
-        clear: 'مسح المحادثة',
-        typing: 'يكتب...',
-        you: 'أنت',
-        bot: 'المدرب الذكي',
-        uploadImage: 'إرفاق صورة',
-        howToUse: 'كيف تستخدم الخدمة',
-        error: '⚠️ خطأ من الخادم: ',
-        empty: 'الرسالة فارغة.',
-        copied: 'تم النسخ!',
-        view: 'عرض',
-        close: 'إغلاق',
-        edit: 'تعديل',
-        save: 'حفظ',
-        cancel: 'إلغاء'
-      },
-      en: {
-        placeholder: 'Type your message...',
-        send: 'Send',
-        mic: 'Record',
-        stop: 'Stop',
-        clear: 'Clear chat',
-        typing: 'typing…',
-        you: 'You',
-        bot: 'Smart Coach',
-        uploadImage: 'Attach image',
-        howToUse: 'How to use',
-        error: '⚠️ Server error: ',
-        empty: 'Empty message.',
-        copied: 'Copied!',
-        view: 'View',
-        close: 'Close',
-        edit: 'Edit',
-        save: 'Save',
-        cancel: 'Cancel'
-      }
-    },
-    t(key) { return this.strings[App.state.lang][key] || key; },
-    setLang(l){ App.state.lang = l; App.elements.userInput.placeholder = this.t('placeholder'); document.documentElement.dir = (l === 'ar') ? 'rtl' : 'ltr'; document.documentElement.lang = l; }
+
+  setLang(lang){
+    App.state.lang = lang;
+    document.documentElement.lang = lang;
+    document.documentElement.dir = dirFor(lang);
+    if (App.el.userInput) App.el.userInput.placeholder = UI.t('placeholder');
   },
-  ui: {
-    appendMessage(role, content, opts = {}) {
-      const E = App.elements;
-      const wrap = document.createElement('div');
-      wrap.className = `msg ${role}`;
-      const bubble = document.createElement('div');
-      bubble.className = 'bubble';
-      bubble.dir = (App.state.lang === 'ar') ? 'rtl' : 'ltr';
 
-      if (opts.editable) {
-        wrap.dataset.messageId = opts.id || (Date.now() + '_' + Math.random().toString(16).slice(2));
-        bubble.setAttribute('contenteditable', 'true');
-        bubble.classList.add('editable');
-      }
-      if (opts.rawHTML) bubble.innerHTML = content; else bubble.textContent = content;
-
-      wrap.appendChild(bubble);
-      E.chat.appendChild(wrap);
-      E.chat.scrollTop = E.chat.scrollHeight;
-      return wrap;
-    },
-    showTyping() {
-      const id = 'typing-' + Date.now();
-      const node = this.appendMessage('bot', App.i18n.t('typing'), { id });
-      node.id = id;
-      return id;
-    },
-    hideTyping(id) {
-      const el = document.getElementById(id);
-      if (el && el.parentNode) el.parentNode.removeChild(el);
-    },
-    showImagePreview(files) {
-      const E = App.elements;
-      E.imagePreview.innerHTML = '';
-      if (!files || !files.length) { E.imagePreview.classList.add('hidden'); return; }
-      E.imagePreview.classList.remove('hidden');
-      Array.from(files).forEach((f, idx) => {
-        const url = URL.createObjectURL(f);
-        const img = document.createElement('img');
-        img.src = url;
-        img.alt = f.name || `image-${idx+1}`;
-        img.className = 'preview-image';
-        img.addEventListener('click', () => App.handlers.openImageViewer(url));
-        E.imagePreview.appendChild(img);
-      });
-    },
-    setRecording(isRec) {
-      const E = App.elements;
-      App.state.isRecording = isRec;
-      E.micBtn.textContent = isRec ? App.i18n.t('stop') : App.i18n.t('mic');
-      E.micBtn.classList.toggle('recording', isRec);
-    }
+  appendMessage(role, content, { rawHTML=false } = {}){
+    if (!App.el.chat) return;
+    const wrap = document.createElement('div');
+    wrap.className = `msg ${role}`;
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.dir = dirFor(App.state.lang);
+    bubble[rawHTML ? 'innerHTML' : 'textContent'] = content;
+    wrap.appendChild(bubble);
+    App.el.chat.appendChild(wrap);
+    App.el.chat.scrollTop = App.el.chat.scrollHeight;
+    return wrap;
   },
-  net: {
-    toBase64(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(',')[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-    },
-    async callAI({ prompt, messages, images, audio, options = {} }) {
-      const headers = { 'Content-Type': 'application/json' };
-      const body = JSON.stringify({
-        prompt, messages, images, audio,
-        model: options.model || 'auto',
-        temperature: options.temperature ?? 0.6,
-        top_p: options.top_p ?? 0.9,
-        max_output_tokens: options.max_output_tokens ?? 2048,
-        system: options.system || undefined,
-        stream: false,
-        timeout_ms: options.timeout_ms ?? 26000,
-        include_raw: false,
-        force_lang: App.state.lang,
-        concise_image: options.concise_image || undefined,
-        guard_level: options.guard_level || 'strict'
-      });
 
-      const res = await fetch('/api/generate', { method: 'POST', headers, body });
-      if (!res.ok) {
-        let errorData = {};
-        try { errorData = await res.json(); } catch {}
-        const serverMsg = [errorData.error, errorData.details, errorData.requestId].filter(Boolean).join(' | ');
-        throw new Error(serverMsg || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      return data?.text || '';
-    },
-    async toInlineData(files) {
-      const out = [];
-      for (const f of files) {
-        const mime = f.type || 'application/octet-stream';
-        const data = await this.toBase64(f);
-        out.push({ inline_data: { mime_type: mime, data } });
-      }
-      return out;
-    }
+  showTyping(){
+    const id = 'typing-' + Date.now();
+    const node = UI.appendMessage('bot', UI.t('typing'));
+    if (node) node.id = id;
+    return id;
   },
-  handlers: {
-    async sendMessage() {
-      const E = App.elements;
-      const text = (E.userInput.value || '').trim();
-      const files = Array.from(E.fileInput.files || []);
-      if (!text && !files.length && !App.state.audioBlob) {
-        alert(App.i18n.t('empty'));
-        return;
-      }
 
-      const userNode = App.ui.appendMessage('user', text || '[media]');
-      E.userInput.value = '';
-      App.state.imageBlobs = files;
-      App.ui.showImagePreview(files);
+  hideTyping(id){
+    const el = $(id);
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  },
 
-      let inlineImages = [];
-      let inlineAudio = [];
-      if (files.length) {
-        inlineImages = await App.net.toInlineData(files);
-      }
-      if (App.state.audioBlob) {
-        const aFile = new File([App.state.audioBlob], 'audio.webm', { type: 'audio/webm' });
-        inlineAudio = await App.net.toInlineData([aFile]);
-        App.state.audioBlob = null;
-      }
-
-      const typingId = App.ui.showTyping();
-      try {
-        const reply = await App.net.callAI({
-          prompt: text,
-          images: inlineImages,
-          audio: inlineAudio,
-          options: { guard_level: 'strict' }
+  showImagePreview(files){
+    if (!App.el.imagePreview) return;
+    App.el.imagePreview.innerHTML = '';
+    if (!files || !files.length) { App.el.imagePreview.classList.add('hidden'); return; }
+    App.el.imagePreview.classList.remove('hidden');
+    Array.from(files).forEach((f, i) => {
+      const url = URL.createObjectURL(f);
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = f.name || `image-${i+1}`;
+      img.className = 'preview-image';
+      if (App.el.imageViewer && App.el.imageViewerModal) {
+        img.addEventListener('click', () => {
+          App.el.imageViewer.src = url;
+          App.el.imageViewerModal.classList.remove('hidden');
         });
-        App.ui.hideTyping(typingId);
-        App.ui.appendMessage('bot', reply);
-      } catch (e) {
-        App.ui.hideTyping(typingId);
-        const msg = (App.state.lang === 'ar') ? `⚠️ خطأ من الخادم: ${e.message}` : `⚠️ Server error: ${e.message}`;
-        App.ui.appendMessage('bot', msg);
-      } finally {
-        E.userInput.focus();
       }
-    },
-    async handleMicRecord(e) {
-      e.preventDefault();
-      if (App.state.isRecording) return;
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert('Microphone not supported.');
-        return;
-      }
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mr = new MediaRecorder(stream);
-        App.state.mediaRecorder = mr;
-        App.state.recordedChunks = [];
-        mr.ondataavailable = (ev) => { if (ev.data && ev.data.size) App.state.recordedChunks.push(ev.data); };
-        mr.onstop = () => {
-          const blob = new Blob(App.state.recordedChunks, { type: 'audio/webm' });
-          App.state.audioBlob = blob;
-        };
-        mr.start();
-        App.ui.setRecording(true);
-      } catch (err) {
-        alert('Cannot access microphone.');
-      }
-    },
-    handleMicStop() {
-      if (!App.state.isRecording) return;
-      const mr = App.state.mediaRecorder;
-      try { mr && mr.state !== 'inactive' && mr.stop(); } catch {}
-      App.ui.setRecording(false);
-    },
-    addImageFiles(files) {
-      const E = App.elements;
-      if (!files || !files.length) return;
-      const dt = new DataTransfer();
-      Array.from(E.fileInput.files || []).forEach(f => dt.items.add(f));
-      for (const f of files) {
-        if ((E.fileInput.files.length + dt.items.length) >= App.config.MAX_IMAGES) break;
-        dt.items.add(f);
-      }
-      E.fileInput.files = dt.files;
-      App.ui.showImagePreview(E.fileInput.files);
-    },
-    handleFileInput(e) {
-      const files = Array.from(e.target.files || []);
-      App.handlers.addImageFiles(files);
-    },
-    handleDrop(e) {
-      e.preventDefault();
-      const files = Array.from(e.dataTransfer.files || []);
-      App.handlers.addImageFiles(files);
-    },
-    handleDragOver(e){ e.preventDefault(); },
-    openImageViewer(src){
-      const E = App.elements;
-      E.imageViewer.src = src;
-      E.imageViewerModal.classList.remove('hidden');
-    },
-    closeImageViewer(){
-      const E = App.elements;
-      E.imageViewerModal.classList.add('hidden');
-      E.imageViewer.src = '';
-    },
-    handleModalClick(e){
-      if (e.target && e.target.classList.contains('modal')) {
-        this.closeImageViewer();
-        const E = App.elements;
-        if (!E.howToUseModal.classList.contains('hidden')) E.howToUseModal.classList.add('hidden');
-      }
-    },
-    openHowToUseModal(){
-      const E = App.elements;
-      E.howToUseModal.classList.remove('hidden');
-    }
-  },
-  init() {
-    this.cacheElements();
-    const E = this.elements;
-    this.i18n.setLang(this.state.lang);
-
-    E.userInput.placeholder = this.i18n.t('placeholder');
-    E.sendBtn.textContent = this.i18n.t('send');
-    E.micBtn.textContent = this.i18n.t('mic');
-    E.clearBtn.textContent = this.i18n.t('clear');
-    E.uploadImageBtn.textContent = this.i18n.t('uploadImage');
-
-    E.sendBtn.addEventListener('click', this.handlers.sendMessage);
-    E.userInput.addEventListener('drop', this.handlers.handleDrop);
-    E.userInput.addEventListener('dragover', this.handlers.handleDragOver);
-    E.fileInput.addEventListener('change', this.handlers.handleFileInput);
-    E.uploadImageBtn.addEventListener('click', () => E.fileInput.click());
-    E.clearBtn.addEventListener('click', () => { E.chat.innerHTML = ''; E.userInput.value=''; E.userInput.focus(); });
-    E.langToggleBtn.addEventListener('click', () => this.i18n.setLang(this.state.lang === 'ar' ? 'en' : 'ar'));
-
-    ['pointerdown','touchstart'].forEach(ev => E.micBtn.addEventListener(ev, this.handlers.handleMicRecord, { passive:false }));
-    ['pointerup','touchend','mouseleave'].forEach(ev => E.micBtn.addEventListener(ev, this.handlers.handleMicStop, { passive:false }));
-
-    E.closeImageViewerBtn.addEventListener('click', this.handlers.closeImageViewer);
-    E.imageViewerModal.addEventListener('click', (e)=> this.handlers.handleModalClick.call(this.handlers, e));
-    E.howToUseLink.addEventListener('click', (e)=>{ e.preventDefault(); this.handlers.openHowToUseModal(); });
-    E.closeHowToUseBtn.addEventListener('click', ()=> E.howToUseModal.classList.add('hidden'));
-    E.howToUseModal.addEventListener('click', (e)=> this.handlers.handleModalClick.call(this.handlers, e));
-
-    initUIEnhancements();
+      App.el.imagePreview.appendChild(img);
+    });
   }
 };
-window.App = App;
-App.init();
+
+/* ---------- Network ---------- */
+const Net = {
+  toBase64(file){
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result.split(',')[1]);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+  },
+  async toInlineData(files){
+    const out = [];
+    for (const f of files) {
+      out.push({ inline_data: { mime_type: f.type || 'application/octet-stream', data: await Net.toBase64(f) } });
+    }
+    return out;
+  },
+  async callAI({ prompt, images, audio }){
+    const body = JSON.stringify({
+      prompt,
+      images,
+      audio,
+      model: App.config.DEFAULT_MODEL,
+      temperature: App.config.DEFAULT_TEMP,
+      top_p: App.config.DEFAULT_TOPP,
+      max_output_tokens: App.config.DEFAULT_MAXTOK,
+      stream: false,
+      timeout_ms: App.config.DEFAULT_TIMEOUT,
+      force_lang: App.state.lang,
+      guard_level: 'strict'
+    });
+
+    const res = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    if (!res.ok) {
+      let err = {};
+      try { err = await res.json(); } catch {}
+      const msg = [err.error, err.details, err.requestId].filter(Boolean).join(' | ') || `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    return data?.text || '';
+  }
+};
+
+/* ---------- Handlers ---------- */
+const H = {
+  async sendMessage(){
+    const text = (App.el.userInput?.value || '').trim();
+    const files = Array.from(App.el.fileInput?.files || []);
+    if (!text && !files.length && !App.state.audioBlob) {
+      UI.appendMessage('bot', UI.t('empty'));
+      return;
+    }
+
+    // طباعة رسالة المستخدم
+    UI.appendMessage('user', text || '[media]');
+    if (App.el.userInput) App.el.userInput.value = '';
+
+    // تجهيز الوسائط
+    let inlineImages = [];
+    if (files.length) {
+      inlineImages = await Net.toInlineData(files);
+      UI.showImagePreview(files);
+    }
+    let inlineAudio = [];
+    if (App.state.audioBlob) {
+      const aFile = new File([App.state.audioBlob], 'audio.webm', { type: 'audio/webm' });
+      inlineAudio = await Net.toInlineData([aFile]);
+      App.state.audioBlob = null;
+    }
+
+    // نداء السيرفر
+    const typingId = UI.showTyping();
+    try {
+      const reply = await Net.callAI({ prompt: text, images: inlineImages, audio: inlineAudio });
+      UI.hideTyping(typingId);
+      UI.appendMessage('bot', reply, { rawHTML: false });
+    } catch (e) {
+      UI.hideTyping(typingId);
+      UI.appendMessage('bot', (App.state.lang === 'ar' ? UI.t('serverError') : UI.t('serverError')) + e.message);
+    } finally {
+      safe(() => App.el.userInput.focus(), null);
+    }
+  },
+
+  async handleMicRecord(e){
+    e.preventDefault();
+    if (App.state.isRecording) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      alert('Microphone not supported.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      App.state.mediaRecorder = mr;
+      App.state.recordedChunks = [];
+      mr.ondataavailable = ev => { if (ev.data && ev.data.size) App.state.recordedChunks.push(ev.data); };
+      mr.onstop = () => {
+        const blob = new Blob(App.state.recordedChunks, { type: 'audio/webm' });
+        App.state.audioBlob = blob;
+      };
+      mr.start();
+      App.state.isRecording = true;
+      if (App.el.micBtn) { App.el.micBtn.textContent = (App.state.lang === 'ar') ? 'إيقاف' : 'Stop'; App.el.micBtn.classList.add('recording'); }
+    } catch {
+      alert('Cannot access microphone.');
+    }
+  },
+
+  handleMicStop(){
+    if (!App.state.isRecording) return;
+    const mr = App.state.mediaRecorder;
+    try { mr && mr.state !== 'inactive' && mr.stop(); } catch {}
+    App.state.isRecording = false;
+    if (App.el.micBtn) { App.el.micBtn.textContent = (App.state.lang === 'ar') ? 'تسجيل' : 'Record'; App.el.micBtn.classList.remove('recording'); }
+  },
+
+  addImageFiles(files){
+    if (!App.el.fileInput || !files?.length) return;
+    const dt = new DataTransfer();
+    Array.from(App.el.fileInput.files || []).forEach(f => dt.items.add(f));
+    for (const f of files) {
+      if (dt.files.length >= App.config.MAX_IMAGES) break;
+      dt.items.add(f);
+    }
+    App.el.fileInput.files = dt.files;
+    UI.showImagePreview(App.el.fileInput.files);
+  },
+
+  handleFileInput(e){ H.addImageFiles(Array.from(e.target.files || [])); },
+  handleDrop(e){ e.preventDefault(); H.addImageFiles(Array.from(e.dataTransfer.files || [])); },
+  handleDragOver(e){ e.preventDefault(); },
+
+  toggleLang(){
+    const next = (App.state.lang === 'ar') ? 'en' : 'ar';
+    UI.setLang(next);
+  },
+
+  closeImageViewer(){
+    if (App.el.imageViewerModal) App.el.imageViewerModal.classList.add('hidden');
+    if (App.el.imageViewer) App.el.imageViewer.src = '';
+  },
+
+  openHowToUseModal(){
+    if (App.el.howToUseModal) App.el.howToUseModal.classList.remove('hidden');
+  },
+
+  closeHowToUseModal(){
+    if (App.el.howToUseModal) App.el.howToUseModal.classList.add('hidden');
+  },
+
+  handleModalClick(e){
+    if (e.target && e.target.classList.contains('modal')) {
+      H.closeImageViewer();
+      H.closeHowToUseModal();
+    }
+  }
+};
+
+/* ---------- Bootstrap ---------- */
+function init(){
+  bindElements();
+  UI.setLang(App.state.lang);
+
+  // نصوص افتراضية للأزرار
+  if (App.el.micBtn) App.el.micBtn.textContent = (App.state.lang === 'ar') ? 'تسجيل' : 'Record';
+  if (App.el.sendBtn) App.el.sendBtn.textContent = (App.state.lang === 'ar') ? 'إرسال' : 'Send';
+  if (App.el.userInput) App.el.userInput.placeholder = UI.t('placeholder');
+
+  // مستمعات أساسية
+  App.el.sendBtn && App.el.sendBtn.addEventListener('click', H.sendMessage);
+  App.el.userInput && App.el.userInput.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.keyCode === 13) && !e.shiftKey) { e.preventDefault(); H.sendMessage(); }
+  });
+
+  App.el.micBtn && App.el.micBtn.addEventListener('pointerdown', H.handleMicRecord, { passive: false });
+  App.el.micBtn && App.el.micBtn.addEventListener('pointerup', H.handleMicStop, { passive: false });
+  App.el.micBtn && App.el.micBtn.addEventListener('mouseleave', H.handleMicStop, { passive: false });
+  App.el.micBtn && App.el.micBtn.addEventListener('touchstart', H.handleMicRecord, { passive: false });
+  App.el.micBtn && App.el.micBtn.addEventListener('touchend', H.handleMicStop, { passive: false });
+
+  App.el.langToggleBtn && App.el.langToggleBtn.addEventListener('click', H.toggleLang);
+
+  App.el.uploadImageBtn && App.el.uploadImageBtn.addEventListener('click', () => App.el.fileInput && App.el.fileInput.click());
+  App.el.fileInput && App.el.fileInput.addEventListener('change', H.handleFileInput);
+
+  // سحب وإفلات داخل مربع الإدخال إن وجد
+  App.el.userInput && App.el.userInput.addEventListener('drop', H.handleDrop);
+  App.el.userInput && App.el.userInput.addEventListener('dragover', H.handleDragOver);
+
+  // عارض الصور/المودالات (اختياري)
+  App.el.closeImageViewerBtn && App.el.closeImageViewerBtn.addEventListener('click', H.closeImageViewer);
+  App.el.imageViewerModal && App.el.imageViewerModal.addEventListener('click', (e) => H.handleModalClick(e));
+  App.el.howToUseLink && App.el.howToUseLink.addEventListener('click', (e) => { e.preventDefault(); H.openHowToUseModal(); });
+  App.el.closeHowToUseBtn && App.el.closeHowToUseBtn.addEventListener('click', H.closeHowToUseModal);
+  App.el.howToUseModal && App.el.howToUseModal.addEventListener('click', (e) => H.handleModalClick(e));
+
+  // ضبط ارتفاع الـ textarea تلقائيًا
+  if (App.el.userInput) {
+    const autoGrow = () => {
+      App.el.userInput.style.height = 'auto';
+      const maxH = 180;
+      const newH = Math.min(App.el.userInput.scrollHeight, maxH);
+      App.el.userInput.style.height = `${newH}px`;
+      App.el.userInput.style.overflowY = (App.el.userInput.scrollHeight > maxH) ? 'auto' : 'hidden';
+    };
+    ['input','change','keyup'].forEach(ev => App.el.userInput.addEventListener(ev, autoGrow));
+    autoGrow();
+  }
+}
+
+document.addEventListener('DOMContentLoaded', init);
