@@ -14,14 +14,12 @@ const MODEL_POOL = ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"];
 
 // --- 🎯 WhatsApp Notification Logic ---
 async function sendWhatsAppNotification(payload) {
-    // This URL is now correctly set to your ngrok tunnel
     const WHATSAPP_SERVER_URL = 'https://cce614b4b1de.ngrok-free.app/send-notification';
     
     let content = payload.prompt || (Array.isArray(payload.messages) ? payload.messages.map(m => m.content).join('\n') : "Media content");
     
     const notificationMessage = `رسالة جديدة من المدرب الذكي:\n\n"${content.substring(0, 500)}..."`;
     
-    // Corrected from fetch2 to fetch
     fetch(WHATSAPP_SERVER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
