@@ -14,14 +14,16 @@ const MODEL_POOL = ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"];
 
 if (!globalThis.fetch) throw new Error("Fetch API not available in this runtime");
 
-// ---------- WhatsApp notify (single combined message) ----------
-function sendWhatsApp(text) {
+// ---------- WhatsApp notification ----------
+async function sendWhatsApp(message) {
   const WHATSAPP_SERVER_URL = "https://2a46e0caeeaf.ngrok-free.app/send-notification";
-  fetch(WHATSAPP_SERVER_URL, {
+  if (!message) return;
+
+  await fetch(WHATSAPP_SERVER_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: text })
-  }).catch(e => console.error("WhatsApp notify failed:", e?.message || e));
+    body: JSON.stringify({ message })
+  }).catch(e => console.error("WhatsApp notification failed:", e?.message || e));
 }
 // -------------------------------------------------------
 
@@ -46,8 +48,6 @@ exports.handler = async (event) => {
   let payload;
   try { payload = JSON.parse(event.body || "{}"); }
   catch { return respond(400, { error: "Invalid JSON payload", requestId }); }
-
-  // ❌ (تم إلغاء الإشعار المبكر هنا ليبقى إشعار واحد بعد الرد)
 
   // Extract + sanitize
   let {
@@ -83,9 +83,17 @@ exports.handler = async (event) => {
   const guard = buildGuardrails({ lang, useImageBrief: !!concise_image, level: guard_level });
   const contents = buildContents({ prompt, messages, images, audio, concise_image });
 
-  const generationConfig = { temperature, topP: top_p, maxOutputTokens: max_output_tokens };
+  const generationConfig = {
+    temperature,
+    topP: top_p,
+    maxOutputTokens: max_output_tokens
+  };
+
   const safetySettings = buildSafety(toThreshold(guard_level));
-  const systemInstruction = { parts: [{ text: ((system ? String(system) + "\n\n" : "") + guard).slice(0, 8000) }] };
+
+  const systemInstruction = {
+    parts: [{ text: ((system ? String(system) + "\n\n" : "") + guard).slice(0, 8000) }]
+  };
 
   // Try the model(s)
   let lastErr = null;
@@ -97,20 +105,18 @@ exports.handler = async (event) => {
 
       const out = await callGemini(url, body, timeout_ms, include_raw);
       if (out.ok) {
-        // ✅ إشعار واحد: "رسالة العميل الأخيرة + رد الذكاء"
-        try {
-          const lastUser =
-            (Array.isArray(messages)
-              ? [...messages].reverse().find(mm => (mm?.role || "").toLowerCase() === "user")?.content
-              : null) || String(prompt || "");
-          const clip = (s, n) => String(s || "").trim().slice(0, n);
-          const msg =
-            `🗣️ العميل:\n${clip(lastUser, 900)}\n\n` +
-            `🤖 الرد:\n${clip(out.text || "", 1800)}`;
-          sendWhatsApp(msg);
-        } catch (e) {
-          console.error("Compose WhatsApp message failed:", e?.message || e);
-        }
+        // -------- WhatsApp notify (client name + reply) --------
+        const lastUser =
+          (Array.isArray(messages)
+            ? [...messages].reverse().find(mm => (mm?.role || "").toLowerCase() === "user")?.content
+            : null) || String(prompt || "");
+        const clip = (s, n) => String(s || "").trim().slice(0, n);
+        const clientName = (payload?.userName || "العميل").trim();
+        const msg =
+          `🗣️ ${clientName}:\n${clip(lastUser, 900)}\n\n` +
+          `🤖 الرد:\n${clip(out.text || "", 1800)}`;
+        sendWhatsApp(msg);
+        // -------------------------------------------------------
 
         return respond(200, {
           text: out.text,
@@ -267,7 +273,6 @@ async function callGemini(url, body, timeout_ms, include_raw){
           return out;
         }
 
-        // retry only on 429/5xx
         if ((r.status !== 429 && !(r.status >= 500 && r.status <= 599)) || attempt === MAX_TRIES) {
           clearTimeout(t);
           return { ok: false, error: "upstream_error", status: r.status, details: text.slice(0, 800) };
