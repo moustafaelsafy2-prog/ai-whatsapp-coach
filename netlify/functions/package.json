@@ -1,31 +1,14 @@
 {
-  "name": "netlify-functions",
+  "name": "whatsapp-server",
   "version": "1.0.0",
-  "private": true,
-  "description": "Serverless functions for Smart Personal Coach (Gemini proxy with fallback/stream/vision/audio).",
-  "main": "gemini-proxy.js",
-  "engines": {
-    "node": ">=18"
-  },
+  "description": "Local server for WhatsApp notifications",
+  "main": "index.js",
   "scripts": {
-    "dev": "netlify dev",
-    "dev:functions": "netlify dev --framework=#static --port=8888",
-    "serve": "netlify dev",
-    "start": "netlify dev",
-    "test": "node -e \"console.log('OK')\""
+    "start": "node index.js"
   },
   "dependencies": {
-    "dotenv": "^16.4.5"
-  },
-  "devDependencies": {
-    "netlify-cli": "^17.34.1"
-  }
-}
-{
-  "name": "chat-app-main",
-  "version": "1.0.0",
-  "description": "Main dependencies for the Netlify deployment",
-  "dependencies": {
-    "node-fetch": "^3.3.2"
+    "express": "^4.19.2",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.23.0"
   }
 }
