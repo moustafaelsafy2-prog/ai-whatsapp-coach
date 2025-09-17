@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>لوحة الإدارة — محادثات المدرب الذكي</title>
+  <style>
+    :root{
+      --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#e5e7eb; --accent:#10b981; --danger:#ef4444; --border:#1f2937;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Noto Sans',Tahoma;
+         background:linear-gradient(180deg,#0b1022,#0f172a 35%,#0b1022); color:var(--text); min-height:100vh;}
+    .container{max-width:1100px;margin-inline:auto;padding:24px}
+    .header{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:16px}
+    .brand{display:flex;align-items:center;gap:10px}
+    .brand img{width:36px;height:36px;border-radius:50%;border:2px solid var(--accent)}
+    .brand h1{font-size:18px;margin:0}
+    .actions{display:flex;gap:8px}
+    button, input, select{font:inherit}
+    .btn{padding:.55rem .9rem;border-radius:10px;border:1px solid var(--border);background:#0b1220;color:var(--text);cursor:pointer}
+    .btn:hover{border-color:#334155}
+    .btn-accent{background:var(--accent);border-color:transparent;color:#062a22;font-weight:700}
+    .btn-danger{background:var(--danger);border-color:transparent;color:#fff}
+    .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-top:10px}
+    .card{background:rgba(17,24,39,.7);backdrop-filter:blur(6px);border:1px solid var(--border);border-radius:14px;padding:14px}
+    .card h3{margin:.2rem 0 .4rem 0;font-size:16px}
+    .meta{color:var(--muted);font-size:12px}
+    .badge{display:inline-block;padding:.15rem .45rem;border-radius:999px;background:#0b1220;border:1px solid var(--border);font-size:11px;color:var(--muted)}
+    .messages{margin-top:10px;max-height:55vh;overflow:auto;border-top:1px dashed #243047;padding-top:10px}
+    .bubble{padding:.6rem .8rem;border-radius:12px;margin:.35rem 0;line-height:1.55}
+    .user{background:#12213d}
+    .assistant{background:#1c2a1f}
+    .empty{padding:18px;border:1px dashed var(--border);border-radius:12px;color:var(--muted);text-align:center}
+    .toolbar{display:flex;gap:8px;align-items:center}
+    .search{flex:1;padding:.55rem .75rem;border-radius:10px;border:1px solid var(--border);background:#0b1220;color:var(--text)}
+    .list{display:flex;flex-direction:column;gap:10px}
+    hr{border:none;border-top:1px solid var(--border);margin:10px 0}
+
+    /* Login overlay */
+    .login-wrap{position:fixed;inset:0;display:grid;place-items:center;background:
+      radial-gradient(1200px 800px at 80% -10%, rgba(16,185,129,.15), transparent 30%),
+      radial-gradient(900px 700px at 10% 110%, rgba(79,70,229,.18), transparent 30%),
+      #0b1022}
+    .login-card{width:min(92vw,380px);background:rgba(17,24,39,.78);backdrop-filter:blur(8px);
+      border:1px solid var(--border);border-radius:16px;padding:22px}
+    .login-card h2{margin:0 0 10px 0;font-size:18px}
+    .field{display:flex;flex-direction:column;margin:10px 0}
+    .field label{font-size:12px;color:var(--muted);margin-bottom:6px}
+    .field input{padding:.7rem .85rem;border-radius:12px;border:1px solid var(--border);background:#0b1220;color:var(--text)}
+    .hint{color:var(--muted);font-size:12px;margin-top:8px}
+    .error{color:#fecaca;font-size:12px;margin-top:6px}
+    .hidden{display:none !important}
+  </style>
+</head>
+<body>
+  <!-- Login -->
+  <div id="loginWrap" class="login-wrap">
+    <div class="login-card">
+      <div class="brand" style="margin-bottom:10px">
+        <img src="https://images.unsplash.com/photo-1581009137042-c552e485697a?auto=format&fit=crop&w=120&q=80" alt="">
+        <h2>تسجيل دخول المشرف</h2>
+      </div>
+      <div class="field">
+        <label>اسم المستخدم</label>
+        <input id="u" placeholder="admin" autocomplete="username">
+      </div>
+      <div class="field">
+        <label>كلمة المرور</label>
+        <input id="p" type="password" placeholder="•••••" autocomplete="current-password">
+      </div>
+      <div class="toolbar" style="margin-top:10px">
+        <button id="loginBtn" class="btn btn-accent" style="flex:1">دخول</button>
+        <button id="clearAuth" class="btn">مسح الجلسة</button>
+      </div>
+      <div id="loginErr" class="error hidden"></div>
+      <div class="hint">يمكنك تغيير بيانات الدخول داخل الكود (USERNAME / PASS_HASH).</div>
+    </div>
+  </div>
+
+  <!-- App -->
+  <div class="container hidden" id="app">
+    <div class="header">
+      <div class="brand">
+        <img src="https://images.unsplash.com/photo-1581009137042-c552e485697a?auto=format&fit=crop&w=120&q=80" alt="">
+        <div>
+          <h1>لوحة الإدارة — المحادثات</h1>
+          <div class="meta">عرض جلسات المخزنة محليًا في هذا الجهاز</div>
+        </div>
+      </div>
+      <div class="actions">
+        <input id="q" class="search" placeholder="ابحث بالاسم أو أول رسالة…" />
+        <button id="refresh" class="btn">تحديث</button>
+        <button id="logout" class="btn btn-danger">خروج</button>
+      </div>
+    </div>
+
+    <div id="list" class="list"></div>
+  </div>
+
+  <script>
+    /*** إعدادات تسجيل الدخول (يمكن تعديلها) ***/
+    const USERNAME = 'admin';
+    // SHA-256("12345") = 5994471abb01112afcc18159f6cc74b4f511b99806da59b3caf5a9c173cacfc5
+    const PASS_HASH = '5994471abb01112afcc18159f6cc74b4f511b99806da59b3caf5a9c173cacfc5';
+
+    const AUTH_KEY = 'adminAuth_v1';
+
+    const $ = (id) => document.getElementById(id);
+
+    async function sha256Hex(s){
+      const enc = new TextEncoder();
+      const buf = await crypto.subtle.digest('SHA-256', enc.encode(s));
+      const bytes = Array.from(new Uint8Array(buf));
+      return bytes.map(b => b.toString(16).padStart(2,'0')).join('');
+    }
+
+    function show(el){ el.classList.remove('hidden'); }
+    function hide(el){ el.classList.add('hidden'); }
+
+    async function tryAutoLogin(){
+      const saved = localStorage.getItem(AUTH_KEY);
+      if (!saved) return false;
+      try{
+        const {u, t} = JSON.parse(saved);
+        // جلسة بسيطة: لا تنتهي، فقط تحقق من اسم المستخدم المخزن
+        if (u === USERNAME && t === 'ok'){
+          hide($('loginWrap')); show($('app')); return true;
+        }
+      }catch{}
+      return false;
+    }
+
+    async function doLogin(){
+      const u = $('u').value.trim();
+      const p = $('p').value;
+      if (u !== USERNAME){
+        $('loginErr').textContent = 'اسم المستخدم غير صحيح';
+        show($('loginErr')); return;
+      }
+      const h = await sha256Hex(p);
+      if (h !== PASS_HASH){
+        $('loginErr').textContent = 'كلمة المرور غير صحيحة';
+        show($('loginErr')); return;
+      }
+      localStorage.setItem(AUTH_KEY, JSON.stringify({u, t:'ok'}));
+      hide($('loginWrap')); show($('app'));
+      loadAll();
+    }
+
+    $('loginBtn').addEventListener('click', doLogin);
+    $('clearAuth').addEventListener('click', () => { localStorage.removeItem(AUTH_KEY); $('p').value=''; $('u').value=''; $('loginErr').classList.add('hidden'); });
+    $('logout').addEventListener('click', () => { localStorage.removeItem(AUTH_KEY); location.reload(); });
+
+    (async () => { if(!(await tryAutoLogin())){ show($('loginWrap')); } else { loadAll(); } })();
+
+    /*** جزء عرض المحادثات ***/
+    const APP_SINGLE_KEY = 'smart-coach-session-v3';
+    const APP_MULTI_PREFIX = 'smart-coach-session-v3__';
+
+    function getAllSessions(){
+      const keys = Object.keys(localStorage);
+      const items = [];
+
+      // جلسة واحدة (النسخة الحالية من تطبيقك)
+      if (localStorage.getItem(APP_SINGLE_KEY)){
+        try{
+          const raw = JSON.parse(localStorage.getItem(APP_SINGLE_KEY));
+          items.push({key: APP_SINGLE_KEY, label: 'جلسة واحدة (افتراضي)', data: raw});
+        }catch{}
+      }
+
+      // جلسات متعددة (لو قررت لاحقًا تخزين عدة عملاء بمفاتيح مختلفة)
+      keys.filter(k => k.startsWith(APP_MULTI_PREFIX)).forEach(k=>{
+        try{
+          const raw = JSON.parse(localStorage.getItem(k));
+          const label = k.slice(APP_MULTI_PREFIX.length) || 'بدون اسم';
+          items.push({key:k, label: `عميل: ${label}`, data: raw});
+        }catch{}
+      });
+
+      return items;
+    }
+
+    function renderList(filter=''){
+      const wrap = $('list');
+      wrap.innerHTML = '';
+      const sessions = getAllSessions();
+
+      if (!sessions.length){
+        wrap.innerHTML = `<div class="empty">لا توجد جلسات محفوظة على هذا الجهاز.</div>`;
+        return;
+      }
+
+      const q = (filter||'').toLowerCase();
+
+      sessions.forEach(sess=>{
+        const chat = Array.isArray(sess?.data?.chatHistory) ? sess.data.chatHistory : [];
+        const meta = sess?.data?.userState?.data || {};
+        const name = String(meta?.name || 'ضيف');
+        const age = String(meta?.age || '').trim();
+        const country = String(meta?.country || '').trim();
+
+        // بحث مبسط
+        const firstText = chat[0]?.parts?.[0]?.text || '';
+        if (q){
+          const hit = [name, firstText].join(' ').toLowerCase().includes(q);
+          if (!hit) return;
+        }
+
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        const h = document.createElement('h3');
+        h.textContent = name || 'ضيف';
+        card.appendChild(h);
+
+        const line = document.createElement('div');
+        line.className = 'meta';
+        line.textContent = `العمر: ${age || '—'} • البلد: ${country || '—'} • الرسائل: ${chat.length}`;
+        card.appendChild(line);
+
+        // شريط أدوات
+        const bar = document.createElement('div');
+        bar.className = 'toolbar';
+        bar.style.marginTop = '8px';
+        const countBadge = document.createElement('span');
+        countBadge.className = 'badge';
+        countBadge.textContent = 'عرض الرسائل';
+        bar.appendChild(countBadge);
+
+        const exportBtn = document.createElement('button');
+        exportBtn.className = 'btn';
+        exportBtn.textContent = 'تصدير JSON';
+        exportBtn.onclick = () => exportJson(sess.key, sess.data);
+        bar.appendChild(exportBtn);
+
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'btn';
+        copyBtn.textContent = 'نسخ النص كودياً';
+        copyBtn.onclick = () => copyPlainText(chat);
+        bar.appendChild(copyBtn);
+
+        card.appendChild(bar);
+
+        // الرسائل
+        const box = document.createElement('div');
+        box.className = 'messages';
+
+        if (!chat.length){
+          box.innerHTML = `<div class="empty">لا رسائل في هذه الجلسة.</div>`;
+        } else {
+          chat.forEach(m=>{
+            const div = document.createElement('div');
+            div.className = 'bubble ' + (m.role === 'assistant' ? 'assistant' : 'user');
+            const who = (m.role === 'assistant') ? 'المساعد' : (name || 'العميل');
+            const t = m?.parts?.[0]?.text || '';
+            const ts = m?.timestamp ? new Date(m.timestamp).toLocaleString('ar-EG') : '';
+            div.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:4px">${who} — ${ts}</div>` +
+                            `<div>${escapeHtml(t).replace(/\n/g,'<br>')}</div>`;
+            box.appendChild(div);
+          });
+        }
+
+        card.appendChild(box);
+        wrap.appendChild(card);
+      });
+
+      if (!wrap.children.length){
+        wrap.innerHTML = `<div class="empty">لا نتائج مطابقة لبحثك.</div>`;
+      }
+    }
+
+    function escapeHtml(s){
+      return String(s||'')
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;')
+        .replace(/'/g,'&#039;');
+    }
+
+    function exportJson(key, data){
+      const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      const file = key.replace(/[^\w\-]+/g,'_') + '.json';
+      a.download = file;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    async function copyPlainText(chat){
+      const lines = chat.map(m=>{
+        const who = (m.role === 'assistant') ? 'المساعد' : 'العميل';
+        const text = (m?.parts?.[0]?.text || '').replace(/\s+/g,' ').trim();
+        return `${who}: ${text}`;
+      }).join('\n');
+      try{
+        await navigator.clipboard.writeText(lines);
+        alert('تم النسخ إلى الحافظة.');
+      }catch{
+        alert('تعذر النسخ تلقائيًا—انسخ يدويًا من النافذة التالية.');
+        prompt('انسخ النص:', lines);
+      }
+    }
+
+    function loadAll(){ renderList($('q').value || ''); }
+    $('refresh').addEventListener('click', loadAll);
+    $('q').addEventListener('input', () => renderList($('q').value || ''));
+  </script>
+
+  <!-- كيف أغير كلمة المرور؟
+       1) افتح أدوات المتصفح (F12) > Console.
+       2) اكتب:
+            crypto.subtle.digest('SHA-256', new TextEncoder().encode('كلمتي'))
+              .then(b=>Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join(''))
+              .then(console.log)
+       3) انسخ الناتج وضعه مكان PASS_HASH.
+       4) غيّر USERNAME لو تحب. -->
+</body>
+</html>
