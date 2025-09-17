@@ -1,7 +1,6 @@
 {
   "name": "chat-app-main",
   "version": "1.0.0",
-  "description": "Main dependencies for the Netlify deployment",
   "dependencies": {
     "node-fetch": "^3.3.2"
   }
