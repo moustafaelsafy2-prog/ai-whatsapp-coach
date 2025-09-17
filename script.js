@@ -24,6 +24,34 @@ function initUIEnhancements() {
   }
 }
 
+/* ====== مزامنة خفيفة لسيرفر الأدمن (Netlify Functions) ====== */
+async function _syncToCloud(payload) {
+  try {
+    const ok = navigator.sendBeacon?.(
+      '/.netlify/functions/log-session',
+      new Blob([JSON.stringify(payload)], { type: 'application/json' })
+    );
+    if (ok) return;
+  } catch {}
+  try {
+    await fetch('/.netlify/functions/log-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch {}
+}
+
+function _getDeviceId() {
+  let id = localStorage.getItem('deviceId');
+  if (!id) {
+    id = (crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2)));
+    localStorage.setItem('deviceId', id);
+  }
+  return id;
+}
+/* ============================================================ */
+
 /* ---------- App State ---------- */
 const App = {
   config: { MAX_PROMPT_CHARS: 28000, STORAGE_KEY: 'smart-coach-session-v3', LONG_PRESS_DURATION: 400, MAX_IMAGES: 5 },
@@ -743,6 +771,14 @@ const App = {
 
       const newMessage = { id: `ai-${Date.now()}`, role: 'assistant', parts: [{ text: response }], timestamp: Date.now() };
       App.state.chatHistory.push(newMessage);
+
+      /* ⬅️ إضافة مزامنة ردّ الذكاء */
+      _syncToCloud({
+        deviceId: _getDeviceId(),
+        userName: App.state?.userState?.data?.name || 'عميل',
+        items: [{ role: 'assistant', text: response, ts: Date.now() }]
+      });
+
       this.saveHistory();
       App.ui.displayMessage(newMessage);
       App.ui.togglePlanCTA();
@@ -773,6 +809,13 @@ const App = {
         parts: [{ text: msg }],
         images: images.map(img => img.dataUrl),
         timestamp: Date.now()
+      });
+
+      /* ⬅️ إضافة مزامنة رسالة المستخدم */
+      _syncToCloud({
+        deviceId: _getDeviceId(),
+        userName: App.state?.userState?.data?.name || 'عميل',
+        items: [{ role: 'user', text: msg, ts: Date.now() }]
       });
 
       App.ui.rebuildChatUI();
