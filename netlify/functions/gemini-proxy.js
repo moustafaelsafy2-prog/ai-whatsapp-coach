@@ -11,13 +11,11 @@ const ALLOWED_IMAGE = /^image\/(png|jpe?g|webp|gif|bmp|svg\+xml)$/i;
 const ALLOWED_AUDIO = /^audio\/(webm|ogg|mp3|mpeg|wav|m4a|aac|3gpp|3gpp2|mp4)$/i;
 
 const MODEL_POOL = ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"];
-
-// --- WhatsApp limits ---
 const MAX_WA_CHARS = 4000;
 
 if (!globalThis.fetch) throw new Error("Fetch API not available in this runtime");
 
-// ---------- WhatsApp notifications (two separate messages) ----------
+// ---------- WhatsApp notifications ----------
 const sanitize = (s = "") =>
   String(s)
     .replace(/\s+\n/g, "\n")
@@ -47,8 +45,8 @@ async function notifyWhatsApp(type, text) {
     console.error("WhatsApp notification failed:", e?.message || e);
   }
 }
-// -------------------------------------------------------
 
+// ---------- Handler ----------
 exports.handler = async (event) => {
   const requestId = (Math.random().toString(36).slice(2) + Date.now().toString(36)).toUpperCase();
 
@@ -56,6 +54,7 @@ exports.handler = async (event) => {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, X-Request-ID",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Expose-Headers": "X-Request-ID",
     "Content-Type": "application/json",
     "X-Request-ID": requestId
   };
@@ -71,7 +70,7 @@ exports.handler = async (event) => {
   try { payload = JSON.parse(event.body || "{}"); }
   catch { return respond(400, { error: "Invalid JSON payload", requestId }); }
 
-  // ===== Send WhatsApp #1: user message only =====
+  // WhatsApp #1: نص المستخدم فقط
   try {
     const userText =
       payload?.prompt ??
@@ -82,11 +81,9 @@ exports.handler = async (event) => {
             .join("\n")
         : "") ||
       (Array.isArray(payload?.images) || Array.isArray(payload?.audio) ? "Media content" : "");
-    if (userText && userText.trim()) {
-      await notifyWhatsApp("user", userText);
-    }
+    if (userText && userText.trim()) await notifyWhatsApp("user", userText);
   } catch (e) {
-    console.error("Building user notify text failed:", e?.message || e);
+    console.error("User notify build failed:", e?.message || e);
   }
 
   // Extract + sanitize
@@ -121,15 +118,15 @@ exports.handler = async (event) => {
 
   // ----- Build request body for Gemini -----
   const guard = buildGuardrails({ lang, useImageBrief: !!concise_image, level: guard_level });
-  const contents = buildContents({ prompt, messages, images, audio, concise_image }); // لا نحقن guard داخل رسائل المستخدم
+  const contents = buildContents({ prompt, messages, images, audio, concise_image });
 
   const generationConfig = { temperature, topP: top_p, maxOutputTokens: max_output_tokens };
+
+  // ← تصحيح أسماء الفئات هنا
   const safetySettings = buildSafety(toThreshold(guard_level));
 
   // systemInstruction: guardrails + (optional) custom system prompt
-  const systemInstruction = {
-    parts: [{ text: ((system ? String(system) + "\n\n" : "") + guard).slice(0, 8000) }]
-  };
+  const systemInstruction = { parts: [{ text: ((system ? String(system) + "\n\n" : "") + guard).slice(0, 8000) }] };
 
   // Try the model(s)
   let lastErr = null;
@@ -141,10 +138,8 @@ exports.handler = async (event) => {
 
       const out = await callGemini(url, body, timeout_ms, include_raw);
       if (out.ok) {
-        // ===== Send WhatsApp #2: assistant reply only =====
-        if (out.text && out.text.trim()) {
-          await notifyWhatsApp("assistant", out.text);
-        }
+        // WhatsApp #2: نص رد Gemini فقط
+        if (out.text && out.text.trim()) await notifyWhatsApp("assistant", out.text);
 
         return respond(200, {
           text: out.text,
@@ -157,7 +152,8 @@ exports.handler = async (event) => {
       }
       lastErr = out;
     }
-    return respond(502, {
+    // نُظهر كود وخلاصة الخطأ الحقيقيين لمساعدتك على التشخيص
+    return respond(lastErr?.status || 502, {
       error: "Upstream call failed",
       status: lastErr?.status || 502,
       details: lastErr?.details || lastErr?.error || "unknown",
@@ -190,11 +186,12 @@ function buildGuardrails({ lang, useImageBrief, level }){
 }
 
 function buildSafety(threshold){
+  // ✅ الأسماء الصحيحة لفئات السلامة في Gemini
   const cats = [
     "HARM_CATEGORY_HATE_SPEECH",
     "HARM_CATEGORY_DANGEROUS_CONTENT",
     "HARM_CATEGORY_HARASSMENT",
-    "HARM_CATEGORY_SEXUALLY_EXPLICIT"
+    "HARM_CATEGORY_SEXUAL_CONTENT"
   ];
   return cats.map(c => ({ category: c, threshold }));
 }
@@ -231,14 +228,14 @@ function buildContents({ prompt, messages, images, audio, concise_image }){
   if (Array.isArray(messages) && messages.length) {
     return messages.map(m => {
       const parts = [];
-      if (m?.content) parts.push({ text: String(m.content) }); // لا نحقن guard هنا
+      if (m?.content) parts.push({ text: String(m.content) });
       parts.push(...mediaParts(m.images, m.audio));
       return { role: (m?.role === "model" || m?.role === "user") ? m.role : "user", parts };
     }).filter(m => m.parts.length);
   }
 
   const parts = [];
-  if (prompt) parts.push({ text: String(prompt) }); // بدون guard
+  if (prompt) parts.push({ text: String(prompt) });
   parts.push(...mediaParts(images, audio));
   return [{ role: "user", parts }];
 }
